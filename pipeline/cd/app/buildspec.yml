@@ -1,0 +1,72 @@
+version: 0.2
+
+env:
+  shell: bash
+  git-credential-helper: yes
+
+phases:
+  pre_build:
+    commands:
+      # コミットIDの取得(CODEBUILD_RESOLVED_SOURCE_VERSIONはCodeBuildの予約語)
+      - LATEST_COMMIT_ID=$CODEBUILD_RESOLVED_SOURCE_VERSION
+
+      # パッケージアップデート
+      - dnf upgrade -y --releasever=latest
+
+      # クローンするため既存ディレクトリを削除
+      - echo "Cleaning the source directory"
+      - rm -rf $CODEBUILD_SRC_DIR/* $CODEBUILD_SRC_DIR/.[!.]* $CODEBUILD_SRC_DIR/..?* || mkdir -p $CODEBUILD_SRC_DIR
+
+      # リポジトリをサブモジュールを含めて再クローン
+      - echo "Re-cloning repository"
+      - git clone --recurse-submodules https://git-codecommit.${AWS_REGION}.amazonaws.com/v1/repos/${CODECOMMIT_REPOSITORY_NAME} $CODEBUILD_SRC_DIR
+      - git checkout $CODECOMMIT_BRANCH_NAME
+      - git submodule update
+
+      # 環境ごとの.env ファイル更新
+      # dev
+      - DEV_SECRET=$(aws ssm get-parameter --name ${SSM_SECRET_DEV} --query "Parameter.Value" --output text --with-decryption)
+      - echo -e "\n${DEV_SECRET}" >> .env.dev
+
+      # stg
+      - STG_SECRET=$(aws ssm get-parameter --name ${SSM_SECRET_STG} --query "Parameter.Value" --output text --with-decryption)
+      - echo -e "\n${STG_SECRET}" >> .env.stg
+
+      # prod
+      - PROD_SECRET=$(aws ssm get-parameter --name ${SSM_SECRET_PROD} --query "Parameter.Value" --output text --with-decryption)
+      - echo -e "\n${PROD_SECRET}" >> .env.prod
+
+  build:
+    commands:
+      - echo $LATEST_COMMIT_ID
+      - echo Building the Docker image...
+
+      # ECRへログイン
+      - aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com
+
+      # 各環境のコンテナイメージのビルド
+      - docker build . -f ./Dockerfile.dev -t ${ECR_REPOSITORY_NAME_FOR_DEV}:${LATEST_COMMIT_ID}
+      - docker build . -f ./Dockerfile.stg -t ${ECR_REPOSITORY_NAME_FOR_STG}:${LATEST_COMMIT_ID}
+      - docker build . -f ./Dockerfile.prod -t ${ECR_REPOSITORY_NAME_FOR_PROD}:${LATEST_COMMIT_ID}
+
+  post_build:
+    commands:
+      # パラメータストアへの登録
+      - aws ssm put-parameter --name ${PARAMETER_NAME} --value ${LATEST_COMMIT_ID} --type String --overwrite
+
+      # imageへのタグ付け
+      - docker tag ${ECR_REPOSITORY_NAME_FOR_DEV}:${LATEST_COMMIT_ID} ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${ECR_REPOSITORY_NAME_FOR_DEV}:${LATEST_COMMIT_ID}
+      - docker tag ${ECR_REPOSITORY_NAME_FOR_DEV}:${LATEST_COMMIT_ID} ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${ECR_REPOSITORY_NAME_FOR_DEV}:tag_for_trigger_pipeline
+
+      - docker tag ${ECR_REPOSITORY_NAME_FOR_STG}:${LATEST_COMMIT_ID} ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${ECR_REPOSITORY_NAME_FOR_STG}:${LATEST_COMMIT_ID}
+      - docker tag ${ECR_REPOSITORY_NAME_FOR_STG}:${LATEST_COMMIT_ID} ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${ECR_REPOSITORY_NAME_FOR_STG}:tag_for_trigger_pipeline
+
+      - docker tag ${ECR_REPOSITORY_NAME_FOR_PROD}:${LATEST_COMMIT_ID} ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${ECR_REPOSITORY_NAME_FOR_PROD}:${LATEST_COMMIT_ID}
+      - docker tag ${ECR_REPOSITORY_NAME_FOR_PROD}:${LATEST_COMMIT_ID} ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${ECR_REPOSITORY_NAME_FOR_PROD}:tag_for_trigger_pipeline
+
+      - docker images
+
+      # ECRへのプッシュ
+      - docker push --all-tags ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${ECR_REPOSITORY_NAME_FOR_DEV}
+      - docker push --all-tags ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${ECR_REPOSITORY_NAME_FOR_STG}
+      - docker push --all-tags ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${ECR_REPOSITORY_NAME_FOR_PROD}

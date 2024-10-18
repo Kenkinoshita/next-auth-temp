@@ -1,0 +1,32 @@
+# ベースイメージとしてnodeを使用
+FROM public.ecr.aws/docker/library/node:20.14.0-alpine
+
+# 作業ディレクトリを設定
+WORKDIR /tmp_work
+
+# .next/cache/images 配下を VOLUME マウントする
+VOLUME /tmp_work/.next/cache/images
+
+# パッケージファイルをコピー
+COPY package*.json ./
+
+# 依存関係をインストール
+RUN npm ci
+
+# アプリケーションのコードをコピー
+COPY . .
+
+# 不要な環境変数ファイルを削除する
+RUN rm .env
+RUN rm .env.stg
+RUN rm .env.prod
+RUN mv .env.dev .env
+
+# アプリケーションをビルド
+RUN npm run build
+
+# ポートを開放
+EXPOSE 3000
+
+# アプリケーションを起動
+CMD ["npm", "start"]

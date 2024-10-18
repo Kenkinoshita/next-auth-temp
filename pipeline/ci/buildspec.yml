@@ -1,0 +1,84 @@
+version: 0.2
+
+env:
+  # for git submodules
+  git-credential-helper: yes
+
+phases:
+  install:
+    commands:
+      - echo Start the install phase ...
+
+      # .nvmrc のバージョンを元にインストール
+      - NODE_VERSION=`head -n 1 .nvmrc`
+      - echo "NODE_VERSION:${NODE_VERSION}"
+      - n ${NODE_VERSION}
+
+      # XXXX_SUCCEEDED=1が成功。初期値は失敗である0。
+      - TYPE_CHECK_SUCCEEDED=0
+      - LINT_SUCCEEDED=0
+      - UNIT_TEST_SUCCEEDED=0
+      - DESTINATION_COMMIT=`aws codecommit get-pull-request --pull-request-id ${PULL_REQUEST_ID} | jq -r '.pullRequest.pullRequestTargets[0].destinationCommit'`
+      - ACCOUNT_ID=`echo ${CODEBUILD_BUILD_ARN} | cut -d ":" -f 5`
+      - PROJECT_ID=`echo ${CODEBUILD_BUILD_ARN} | cut -d ":" -f 6 | cut -d "/" -f 2`
+      - BUILD_ID=`echo ${CODEBUILD_BUILD_ID} | cut -d ":" -f 2`
+      - BUILD_URL="https://${AWS_DEFAULT_REGION}.console.aws.amazon.com/codesuite/codebuild/${ACCOUNT_ID}/projects/${PROJECT_ID}/build/${PROJECT_ID}%3A${BUILD_ID}"
+  pre_build:
+    on-failure: ABORT
+    commands:
+      - echo Start the pre_build phase ...
+      - cd ${CODEBUILD_SRC_DIR}
+      - git checkout ${BRANCH_NAME}
+      - npm ci
+  build:
+    on-failure: ABORT
+    commands:
+      - echo Start the build phase ...
+      # 型チェック実行
+      - echo Running type checking...
+      - |
+        if ! npm run check-type; then
+          TYPE_CHECK_SUCCEEDED=0
+        else
+          TYPE_CHECK_SUCCEEDED=1
+        fi
+
+      # Linter実行
+      - echo Running Linter checking...
+      - |
+        if [ ${TYPE_CHECK_SUCCEEDED} -eq 0 ]; then
+          LINT_SUCCEEDED=-1
+        elif ! npm run lint; then
+          LINT_SUCCEEDED=0
+        else
+          LINT_SUCCEEDED=1
+        fi
+
+      # UT実行
+      - echo Running UnitTest checking...
+      - |
+        if [ ${LINT_SUCCEEDED} -eq 0 ]; then
+          UNIT_TEST_SUCCEEDED=-1
+        elif ! npm run test; then
+          UNIT_TEST_SUCCEEDED=0
+        else
+          UNIT_TEST_SUCCEEDED=1
+        fi
+  post_build:
+    commands:
+      - echo Start the post_build phase ...
+      - echo "TYPE_CHECK_SUCCEEDED:${TYPE_CHECK_SUCCEEDED}"
+      - echo "LINT_SUCCEEDED:${LINT_SUCCEEDED}"
+      - echo "UNIT_TEST_SUCCEEDED:${UNIT_TEST_SUCCEEDED}"
+      # Post a comment for a pull request tied to the project.
+      - COMMENT="\[CI\] process is $([ ${UNIT_TEST_SUCCEEDED} -eq 1 ] && echo "succeeded!" || echo "failed!" )"
+      - COMMENT="${COMMENT}  $([ ${TYPE_CHECK_SUCCEEDED} -eq 1 ] && echo "✅" || echo "❌" )TypeCheck,"
+      - COMMENT="${COMMENT}  $([ ${LINT_SUCCEEDED} -eq 1 ] && echo "✅" || echo "❌" )Lint,"
+      - COMMENT="${COMMENT}  $([ ${UNIT_TEST_SUCCEEDED} -eq 1 ] && echo "✅" || echo "❌" )UnitTest"
+      - COMMENT="${COMMENT}  ... [See detail](${BUILD_URL})"
+      - |
+        aws codecommit post-comment-for-pull-request --pull-request-id ${PULL_REQUEST_ID} \
+            --repository-name ${REPOSITORY_NAME} \
+            --before-commit-id ${CODEBUILD_RESOLVED_SOURCE_VERSION} \
+            --after-commit-id ${DESTINATION_COMMIT} \
+            --content "${COMMENT}"
