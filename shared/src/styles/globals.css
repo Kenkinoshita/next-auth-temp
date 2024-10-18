@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+
+    /* コンテンツを表示する最大の幅 */
+    --content-max-width: 978px;
+
+    /* corporate */
+    --corporate-dark: #eb7000;
+    --corporate-semi-light: #facf9c;
+    --corporate-light: #fce7cd;
+
+    /* orange */
+    --orange-dark: #de9d02;
+    --orange-semiLight: #eece80;
+    --orange-light: #fdeecb;
+
+    /* blue */
+    --blue-light: #def2fe;
+
+    /* gray */
+    --gray-dark: #535252;
+    --gray-semi-dark: #888888;
+    --gray-default: #bcbdbd;
+    --gray-semi-light: #d4d5d5;
+    --gray-light: #eeeeee;
+
+    /* yellow */
+    --yellow-dark: #f0b400;
+    --yellow-light: #fff5cc;
+
+    /* attention */
+    --attention-dark: #e50000;
+    --attention-light: #ffdede;
+
+    /* link */
+    --link-default: #0033cc;
+    --link-hover: #3399ff;
+    --link-visited: #6666cc;
+
+    /* autofill */
+    --autofill: #e8f0fe;
+  }
+
+  body {
+    @apply font-body;
+  }
+}
